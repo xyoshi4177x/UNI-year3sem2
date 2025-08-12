@@ -1,0 +1,171 @@
+# Atomic Elements Network Application
+
+This project implements a **TCP server** and **client** that communicate using a custom, efficient binary protocol with application-layer error detection (CRC32).  
+The system allows storing and retrieving atomic element data and simulating element quantities.
+
+---
+
+## Features
+**Server Functions**
+1. **Get weight** — Given an element name, return its atomic weight.
+2. **Get quantity** — Given an element name and student number, simulate the quantity in the universe:
+   ```
+   quantity = random(1..10) × student_number × weight
+   ```
+3. **Add element** — Add a new element with weight (in-memory only). Duplicate detection included.
+
+**Client Functions**
+- Menu-driven CLI for all three server functions.
+- Input validation for names and weights.
+- Clear display of errors and successes.
+
+**Protocol**
+- Length-prefixed frames with fixed-size header + payload + CRC32.
+- Payload encoded as `key=value` lines.
+- Request/response pairing via `req_id`.
+- Application-level error codes:
+  ```
+  100 Missing field
+  101 Not found
+  102 Duplicate
+  103 Invalid weight
+  104 Invalid name
+  200 CRC mismatch
+  300 Bad version
+  301 Bad type
+  400 Malformed payload
+  ```
+- Error flag in header to distinguish failures.
+
+---
+
+## Requirements
+- Python 3.11+ (tested with Python 3.13.6)
+- No external libraries needed.
+
+---
+
+## Project Structure
+```
+atomic-net/
+├─ client/
+│  └─ client.py
+├─ common/
+│  ├─ protocol.py
+│  └─ codes.py
+├─ server/
+│  ├─ server.py
+│  └─ storage.py
+├─ data/
+│  └─ ass1_base_data.csv
+├─ test_client.py       # Small direct protocol tester
+├─ README.md
+```
+
+---
+
+## Running the Server
+
+From project root:
+```bash
+python -m server.server --port 5000 --elements data/ass1_base_data.csv
+```
+- `--port` : TCP port to listen on (default 5000)
+- `--host` : Bind address (default `0.0.0.0`)
+
+---
+
+## Running the Client
+
+From project root:
+```bash
+python -m client.client --host 127.0.0.1 --port 5000 --student 2004420
+```
+- `--student` : Optional default student number (if omitted, you’ll be prompted)
+
+---
+
+## Example Session
+
+**Server:**
+```
+Server listening on ('0.0.0.0', 5000)
+```
+
+**Client:**
+```
+--- Atomic Client ---
+1) Get weight
+2) Get quantity
+3) Add element
+0) Quit
+Select: 1
+Element name: Dreamium
+✅ weight=412.32
+
+Select: 2
+Element name: Dreamium
+✅ quantity=5090366654
+
+Select: 3
+New element name: Testium
+New element weight: 999.99
+✅ status=ok
+
+Select: 1
+Element name: Testium
+✅ weight=999.99
+```
+
+---
+
+## Error Handling Examples
+
+**Unknown element:**
+```
+❌ Error [101]: NoSuchium not found
+```
+
+**Duplicate add:**
+```
+❌ Error [102]: Duplicate element 'Dreamium'
+```
+
+**Bad weight:**
+```
+❌ Error [103]: invalid weight
+```
+
+---
+
+## CRC Error Detection Demo
+
+Use the included `test_client.py` to simulate corrupted frames.
+
+**Normal run:**
+```bash
+python test_client.py
+```
+
+**Corrupt payload:**
+```bash
+python test_client.py --corrupt payload
+```
+
+**Corrupt CRC:**
+```bash
+python test_client.py --corrupt crc
+```
+
+**Example output (corrupt CRC):**
+```
+header: {'version': 1, 'type': 16, 'flags': 1, 'fmt': 0, 'req_id': 0}
+data: {'code': '200', 'msg': 'CRC mismatch: got 3834227683, expected 958362214'}
+```
+
+---
+
+## Notes
+- Data is stored **in memory**. Adding elements does not persist across server restarts.
+- CSV must be valid: `name,weight` per line.
+- Random quantity changes each call due to `random.randint(1, 10)`.
