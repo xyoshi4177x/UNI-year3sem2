@@ -5,6 +5,9 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * CPU scheduling simulator implementing FCFS, RR, SRR and FB algorithms.
+ */
 public class A1 {
 
     // ====== Data Models ======================================================
@@ -37,6 +40,19 @@ public class A1 {
         }
     }
 
+    static final class PState {
+        final Proc p;
+        int remaining;
+        int completion = -1;
+        int q = 3;
+        int level = 0;
+
+        PState(Proc p) {
+            this.p = p;
+            this.remaining = p.service;
+        }
+    }
+
     // Output structs
     static final class Slice {
         final int startTime; // CPU start time (after dispatcher)
@@ -60,6 +76,12 @@ public class A1 {
     }
 
     // ====== Main =============================================================
+    /**
+     * Entry point for the simulator. Expects a single argument pointing to the
+     * input file describing dispatcher time and processes.
+     *
+     * @param args command line arguments
+     */
     public static void main(String[] args) {
         if (args.length != 1) {
             System.err.println("Usage: java A1 <input-file>");
@@ -106,18 +128,13 @@ public class A1 {
     }
 
     // ====== FCFS Simulation ==================================================
-    private static RunResult runFCFS(Input in) {
-        final class PState {
-            final Proc p;
-            int remaining;
-            int completion = -1;
-
-            PState(Proc p) {
-                this.p = p;
-                this.remaining = p.service;
-            }
-        }
-
+    /**
+     * Simulates First Come First Serve scheduling.
+     *
+     * @param in parsed input data
+     * @return metrics and timeline of the run
+     */
+    static RunResult runFCFS(Input in) {
         List<PState> all = new ArrayList<>();
         for (Proc p : in.procs)
             all.add(new PState(p));
@@ -181,18 +198,14 @@ public class A1 {
     // - At dispatch start time t1, only consider arrivals with arrival <= t1.
     // - If a process is preempted at time t1 and others arrive at the same t1,
     // enqueue those arrivals FIRST, then the preempted proc.
-    private static RunResult runRR(Input in, int quantum) {
-        final class PState {
-            final Proc p;
-            int remaining;
-            int completion = -1;
-
-            PState(Proc p) {
-                this.p = p;
-                this.remaining = p.service;
-            }
-        }
-
+    /**
+     * Simulates Round Robin scheduling with a fixed time quantum.
+     *
+     * @param in parsed input data
+     * @param quantum time slice for each process
+     * @return metrics and timeline of the run
+     */
+    static RunResult runRR(Input in, int quantum) {
         List<PState> all = new ArrayList<>();
         for (Proc p : in.procs)
             all.add(new PState(p));
@@ -269,20 +282,14 @@ public class A1 {
     }
 
     // ====== SRR Simulation (per-process quantum grows 3→6) ===================
-    private static RunResult runSRR(Input in) {
-        final class PState {
-            final Proc p;
-            int remaining;
-            int q; // current quantum for this process
-            int completion = -1;
-
-            PState(Proc p) {
-                this.p = p;
-                this.remaining = p.service;
-                this.q = 3;
-            }
-        }
-
+    /**
+     * Simulates Selfish Round Robin where each process's quantum grows from 3
+     * up to a maximum of 6 on each round.
+     *
+     * @param in parsed input data
+     * @return metrics and timeline of the run
+     */
+    static RunResult runSRR(Input in) {
         List<PState> all = new ArrayList<>();
         for (Proc p : in.procs)
             all.add(new PState(p));
@@ -359,20 +366,14 @@ public class A1 {
     }
 
     // ====== FB Simulation (4 levels, q=3, demote on expiry, no boosting) ======
-    private static RunResult runFB(Input in) {
-        final class PState {
-            final Proc p;
-            int remaining;
-            int level; // 0 (highest) .. 3 (lowest)
-            int completion = -1;
-
-            PState(Proc p) {
-                this.p = p;
-                this.remaining = p.service;
-                this.level = 0;
-            }
-        }
-
+    /**
+     * Simulates a 4-level feedback queue with constant quantum of 3 and no
+     * priority boosting.
+     *
+     * @param in parsed input data
+     * @return metrics and timeline of the run
+     */
+    static RunResult runFB(Input in) {
         List<PState> all = new ArrayList<>();
         for (Proc p : in.procs)
             all.add(new PState(p));
@@ -491,12 +492,21 @@ public class A1 {
     // PID: pN
     // ArrTime: <int>
     // SrvTime: <int>
+    /**
+     * Parses an input file describing dispatcher time and processes.
+     *
+     * @param file path to the input file
+     * @return structured input
+     * @throws IOException    if the file cannot be read
+     * @throws ParseException if the file format is invalid
+     */
     static Input parse(Path file) throws IOException, ParseException {
         List<String> lines = Files.readAllLines(file);
 
         Integer disp = null;
         final Pattern keyVal = Pattern.compile("^\\s*([A-Za-z]+)\\s*:\\s*(\\S.*)?\\s*$");
         final List<Proc> procs = new ArrayList<>();
+        final Set<String> seenPids = new HashSet<>();
 
         String curPid = null;
         Integer curArr = null;
@@ -535,13 +545,15 @@ public class A1 {
                 case "PID":
                     // finalize previous proc block if any
                     if (curPid != null) {
-                        ensureProcCompleteAndAdd(procs, curPid, curArr, curSrv, lineNo);
+                        ensureProcCompleteAndAdd(procs, seenPids, curPid, curArr, curSrv, lineNo);
                         curPid = null;
                         curArr = null;
                         curSrv = null;
                     }
                     if (value.isEmpty())
                         throw new ParseException(lineNo, "PID value missing.");
+                    if (seenPids.contains(value))
+                        throw new ParseException(lineNo, "Duplicate PID: " + value);
                     curPid = value;
                     break;
 
@@ -563,7 +575,7 @@ public class A1 {
         }
 
         if (curPid != null) {
-            ensureProcCompleteAndAdd(procs, curPid, curArr, curSrv, lineNo + 1);
+            ensureProcCompleteAndAdd(procs, seenPids, curPid, curArr, curSrv, lineNo + 1);
         }
         if (disp == null)
             throw new ParseException(0, "Missing required DISP line.");
@@ -580,15 +592,28 @@ public class A1 {
         return new Input(disp, procs);
     }
 
-    private static void ensureProcCompleteAndAdd(List<Proc> out, String pid, Integer arr, Integer srv, int lineNo)
+    /**
+     * Ensures a process block is complete and adds it to the output list while
+     * checking for duplicate PIDs.
+     */
+    private static void ensureProcCompleteAndAdd(List<Proc> out, Set<String> seen, String pid,
+                                                 Integer arr, Integer srv, int lineNo)
             throws ParseException {
         if (arr == null)
             throw new ParseException(lineNo, "Missing ArrTime for process " + pid);
         if (srv == null)
             throw new ParseException(lineNo, "Missing SrvTime for process " + pid);
+        if (!seen.add(pid))
+            throw new ParseException(lineNo, "Duplicate PID: " + pid);
         out.add(new Proc(pid, arr, srv));
     }
 
+    /**
+     * Extracts the numeric portion of a PID of the form {@code pN}.
+     *
+     * @param pid process identifier string
+     * @return numeric component of the PID
+     */
     static int parsePidNumber(String pid) {
         Matcher m = Pattern.compile("^p(\\d+)$").matcher(pid);
         if (!m.matches())
